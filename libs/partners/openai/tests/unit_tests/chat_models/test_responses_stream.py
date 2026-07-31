@@ -50,7 +50,10 @@ from openai.types.shared.reasoning import Reasoning
 from openai.types.shared.response_format_text import ResponseFormatText
 
 from langchain_openai import ChatOpenAI
-from tests.unit_tests.chat_models.test_base import MockSyncContextManager
+from tests.unit_tests.chat_models.test_base import (
+    MockAsyncContextManager,
+    MockSyncContextManager,
+)
 
 MODEL = "gpt-5.4"
 
@@ -1242,4 +1245,98 @@ def test_responses_stream_surfaces_error_event() -> None:
         pytest.raises(ValueError, match="rate_limit_exceeded"),
     ):
         for _ in llm.stream("test"):
+            pass
+
+
+def _failed_event(
+    error: ResponseError | None,
+) -> tuple[ResponseCreatedEvent, ResponseFailedEvent]:
+    """Build a `response.created` + `response.failed` pair, with or without error."""
+    created = _in_progress_stream_head()
+    failed_response = created.response.model_copy(
+        update={"status": "failed", "error": error}
+    )
+    return created, ResponseFailedEvent(
+        response=failed_response, sequence_number=1, type="response.failed"
+    )
+
+
+def test_responses_stream_surfaces_failed_event_without_error_payload() -> None:
+    """`response.failed` must raise even when it carries no `error` payload.
+
+    `error` is optional on `Response`, so a failed response is not guaranteed to
+    include one. Keying off the error payload alone would leave this case looking
+    exactly like a successful stream, which is the defect #39039 reports.
+    """
+    stream = list(_failed_event(None))
+
+    llm = ChatOpenAI(model=MODEL, use_responses_api=True)
+    mock_client = MagicMock()
+
+    def mock_create(*args: Any, **kwargs: Any) -> MockSyncContextManager:
+        return MockSyncContextManager(stream)
+
+    mock_client.responses.create = mock_create
+
+    with (
+        patch.object(llm, "root_client", mock_client),
+        pytest.raises(ValueError, match="failed without an error payload"),
+    ):
+        for _ in llm.stream("test"):
+            pass
+
+
+async def test_responses_astream_surfaces_response_failed_event() -> None:
+    """The async path must surface a failed stream just as the sync path does."""
+    stream = list(
+        _failed_event(
+            ResponseError(
+                code="server_error",
+                message="The model failed to generate a response.",
+            )
+        )
+    )
+
+    llm = ChatOpenAI(model=MODEL, use_responses_api=True)
+    mock_client = MagicMock()
+
+    async def mock_create(*args: Any, **kwargs: Any) -> MockAsyncContextManager:
+        return MockAsyncContextManager(stream)
+
+    mock_client.responses.create = mock_create
+
+    with (
+        patch.object(llm, "root_async_client", mock_client),
+        pytest.raises(ValueError, match="server_error"),
+    ):
+        async for _ in llm.astream("test"):
+            pass
+
+
+async def test_responses_astream_surfaces_error_event() -> None:
+    """The async path must surface a top-level `error` event as well."""
+    stream = [
+        _in_progress_stream_head(),
+        ResponseErrorEvent(
+            type="error",
+            code="rate_limit_exceeded",
+            message="Rate limit reached for gpt-5.4.",
+            param=None,
+            sequence_number=1,
+        ),
+    ]
+
+    llm = ChatOpenAI(model=MODEL, use_responses_api=True)
+    mock_client = MagicMock()
+
+    async def mock_create(*args: Any, **kwargs: Any) -> MockAsyncContextManager:
+        return MockAsyncContextManager(stream)
+
+    mock_client.responses.create = mock_create
+
+    with (
+        patch.object(llm, "root_async_client", mock_client),
+        pytest.raises(ValueError, match="rate_limit_exceeded"),
+    ):
+        async for _ in llm.astream("test"):
             pass
