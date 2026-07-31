@@ -234,7 +234,7 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "open_weights": False,
         "max_input_tokens": 1024,
         "max_output_tokens": 0,
-        "text_inputs": False,
+        "text_inputs": True,
         "image_inputs": True,
         "audio_inputs": False,
         "pdf_inputs": True,
