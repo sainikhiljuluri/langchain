@@ -5098,14 +5098,13 @@ def _convert_responses_chunk_to_generation_chunk(
         id = response.id
         response_metadata["id"] = response.id  # Backwards compatibility
     elif chunk.type == "error":
-        # An `error` event carries no `response` object -- only `code`, `message`
-        # and `param` -- so it cannot go through the terminal-response branch
-        # below.
+        # An `error` event carries no `response` object, so it cannot go through
+        # the terminal-response branch below.
         msg = f"{chunk.code}: {chunk.message}" if chunk.code else chunk.message
         raise ValueError(msg)
     elif chunk.type == "response.failed":
         # `error` is optional on `Response`, so a failed response is not
-        # guaranteed to carry one. Raise either way: a stream that failed must
+        # guaranteed to carry one. Raise either way — a stream that failed must
         # never look like a stream that succeeded.
         response = _coerce_chunk_response(chunk.response)
         if response.error:

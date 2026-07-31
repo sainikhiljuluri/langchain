@@ -1181,22 +1181,15 @@ def test_responses_stream_surfaces_response_failed_event() -> None:
     indistinguishable from a completed one and the error never reached the
     caller.
     """
-    created = _in_progress_stream_head()
-    failed_response = created.response.model_copy(
-        update={
-            "status": "failed",
-            "error": ResponseError(
-                code="server_error",
-                message="The model failed to generate a response.",
-            ),
-        }
+    created, failed = _failed_event(
+        ResponseError(
+            code="server_error",
+            message="The model failed to generate a response.",
+        )
     )
-    stream = [
-        created,
-        ResponseFailedEvent(
-            response=failed_response, sequence_number=1, type="response.failed"
-        ),
-    ]
+    # Include the content that streamed before the failure, so the test also
+    # pins that raising does not discard what the caller already received.
+    stream = [created, *responses_stream[2:6], failed]
 
     llm = ChatOpenAI(model=MODEL, use_responses_api=True)
     mock_client = MagicMock()
@@ -1206,12 +1199,17 @@ def test_responses_stream_surfaces_response_failed_event() -> None:
 
     mock_client.responses.create = mock_create
 
+    received: list[BaseMessageChunk] = []
     with (
         patch.object(llm, "root_client", mock_client),
-        pytest.raises(ValueError, match="server_error"),
+        pytest.raises(
+            ValueError, match=r"server_error.*model failed to generate a response"
+        ),
     ):
-        for _ in llm.stream("test"):
-            pass
+        received.extend(llm.stream("test"))
+
+    # Everything that arrived before the failure is still delivered.
+    assert received
 
 
 def test_responses_stream_surfaces_error_event() -> None:
@@ -1242,7 +1240,7 @@ def test_responses_stream_surfaces_error_event() -> None:
 
     with (
         patch.object(llm, "root_client", mock_client),
-        pytest.raises(ValueError, match="rate_limit_exceeded"),
+        pytest.raises(ValueError, match=r"rate_limit_exceeded: Rate limit reached"),
     ):
         for _ in llm.stream("test"):
             pass
